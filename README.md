@@ -43,3 +43,25 @@ This project examines how hyperlink networks among state-level energy policy act
 ## Results
 Regression outputs are exported via `stargazer` to `/output/` as `.txt` and `.tex` files.
 
+## Project Structure
+```
+│
+├── README.md
+├── .gitignore
+│
+├── R/
+│   ├── 00_organization.R
+│   ├── 01_hyperlink_collection.R
+│   ├── 02_network_measures.R
+│   ├── 03_network_visualization.R
+│   ├── 04_data_preprocessing_regression.R
+│   └── 05_regression.R
+│
+├── data/
+│   └── README.md          
+│
+└── output/
+    └── README.md       
+
+```
+
