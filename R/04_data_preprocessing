@@ -1,0 +1,120 @@
+# 04_data_preprocessing_regression.R
+# Purpose: Merge network measures with policy outcomes and economic covariates;
+#          produce regression-ready data frame.
+# Input:   data/network_analysis.csv  +  data/control_variables/*.xlsx
+# Output:  data/reg_df.csv  (also kept in memory as reg_df)
+
+# ── Libraries ────────────────────────────────────────────────────────────────
+library(readxl)
+library(usdata)
+library(tidyverse)
+library(stargazer)
+library(PerformanceAnalytics)
+
+# ── Paths ────────────────────────────────────────────────────────────────────
+DATA_DIR    <- "data"
+CTRL_DIR    <- file.path(DATA_DIR, "control_variables")
+OUTPUT_DIR  <- "output"
+if (!dir.exists(OUTPUT_DIR)) dir.create(OUTPUT_DIR)
+
+# ── Dependent variables ───────────────────────────────────────────────────────
+# ACEEE State Energy Efficiency Scorecard (2024/2025)
+EE_score <- read_xlsx(file.path(DATA_DIR, "ACEEE2025StateScore.xlsx"))
+state_score <- EE_score %>%
+  mutate(statename = state2abbr(State)) %>%
+  rename(score = `State Score`) %>%
+  select(statename, score)
+
+# Clean-energy employment (BLS)
+EE_job <- read_xlsx(file.path(DATA_DIR, "EE jobs.xlsx"))
+state_job <- EE_job %>%
+  mutate(job_change     = `EE job 2024` - `EE job 2023`,
+         job_change_prt = (`EE job 2024` - `EE job 2023`) / `EE job 2023` * 100) %>%
+  rename(statename = `State abbreviation`,
+         job2023   = `EE job 2023`,
+         job2024   = `EE job 2024`) %>%
+  select(statename, job2023, job2024, job_change, job_change_prt)
+
+# ── Control variables ─────────────────────────────────────────────────────────
+# State GDP per capita (BEA, 2017 dollars)
+state_pop <- read_xlsx(file.path(CTRL_DIR, "state population estimates.xlsx"), skip = 1)
+state_GDP <- read_xlsx(file.path(CTRL_DIR, "Real GDP By State (millions of 2017 dolllars).xlsx"))
+state_gdp_percap <- left_join(state_pop, state_GDP, by = c("state" = "State")) %>%
+  mutate(statename          = state2abbr(state),
+         state_gdp_percap2023 = `2023` / pop2023 * 1e6,
+         state_gdp_percap2024 = `2024` / pop2024 * 1e6) %>%
+  select(statename, state_gdp_percap2023, state_gdp_percap2024, pop2023, pop2024)
+
+# Share of opposing industry (fossil fuel / utility GDP share)
+state_industry <- read_xlsx(file.path(CTRL_DIR, "State Annual Real GDP in 2017 Dollar By Industry 2023.xlsx"),
+                             sheet = "state data") %>%
+  mutate(statename = state2abbr(state))
+state_ins_sum <- state_industry %>%
+  group_by(statename) %>% summarise(gdp_opp2023 = sum(gdp))
+state_gdp2023 <- state_GDP %>%
+  mutate(statename = state2abbr(State)) %>% select(statename, `2023`)
+state_share <- left_join(state_gdp2023, state_ins_sum, by = "statename") %>%
+  mutate(share = gdp_opp2023 / `2023` * 100)
+
+# Petroleum & coal share
+state_petroleum <- read_xlsx(file.path(CTRL_DIR, "State Annual Real GDP in 2017 Dollar By Industry 2023.xlsx"),
+                              sheet = "state petroleum") %>%
+  mutate(statename = state2abbr(state))
+state_p_share <- left_join(state_gdp2023, state_petroleum, by = "statename") %>%
+  mutate(p_share = gdp / `2023` * 100)
+
+# MRP political ideology (2020 presidential year)
+mass_ideo <- read_xlsx(file.path(CTRL_DIR, "state ideology.xlsx")) %>%
+  filter(presidential_year == 2020) %>%
+  select(abb, mrp_ideology) %>%
+  rename(statename = abb)
+
+# Governor party
+state_party <- read_xlsx(file.path(CTRL_DIR, "governor party.xlsx")) %>%
+  mutate(statename = state2abbr(state)) %>%
+  select(statename, Democrat)
+
+# E-government index
+state_Eindex <- read_xlsx(file.path(CTRL_DIR, "state E-government index.xlsx")) %>%
+  mutate(statename = state2abbr(State)) %>%
+  rename(E_score = `2008 Rating`) %>%
+  select(statename, E_score)
+
+# Unemployment rate (2023)
+state_uemploy <- read_xlsx(file.path(CTRL_DIR, "state unemployment rate 2023.xlsx")) %>%
+  mutate(statename = state2abbr(state)) %>%
+  select(statename, rate)
+
+# ── Merge all variables ───────────────────────────────────────────────────────
+state_network <- read.csv(file.path(DATA_DIR, "network_analysis.csv"))
+
+state_df <- state_network %>%
+  left_join(state_score,       by = c("state" = "statename")) %>%
+  left_join(state_job,         by = c("state" = "statename")) %>%
+  left_join(state_gdp_percap,  by = c("state" = "statename")) %>%
+  left_join(state_p_share,     by = c("state" = "statename")) %>%
+  left_join(mass_ideo,         by = c("state" = "statename")) %>%
+  left_join(state_party,       by = c("state" = "statename")) %>%
+  left_join(state_Eindex,      by = c("state" = "statename")) %>%
+  left_join(state_share,       by = c("state" = "statename")) %>%
+  left_join(state_uemploy,     by = c("state" = "statename"))
+
+reg_df <- state_df %>%
+  mutate(loggdp    = log(state_gdp_percap2023),
+         logpop    = log(pop2023),
+         logjob2023 = log(job2023),
+         logjob2024 = log(job2024)) %>%
+  select(state, average_degree_centrality, average_clustering, net_size,
+         score, logjob2023, loggdp, logpop, share, mrp_ideology, E_score)
+
+write.csv(reg_df, file.path(DATA_DIR, "reg_df.csv"), row.names = FALSE)
+
+# ── Exploratory data analysis ─────────────────────────────────────────────────
+summary(reg_df)
+cor_dat <- reg_df[, -1]
+chart.Correlation(cor_dat, histogram = TRUE, pch = 19)
+
+stargazer(reg_df, type = "text",
+          title  = "Descriptive statistics – selected variables",
+          digits = 2,
+          out    = file.path(OUTPUT_DIR, "summary_table.txt"))
