@@ -1,0 +1,128 @@
+# 05_regression.R
+# Purpose: OLS regression models predicting state EE outcomes from network
+#          structure, with full diagnostic checks (nonlinearity, normality,
+#          heteroscedasticity, multicollinearity, outliers).
+# Input:   data/reg_df.csv
+# Output:  output/reg_results_EEscore.txt / .tex
+#          output/reg_results_EEjob.txt   / .tex
+
+# ── Libraries ────────────────────────────────────────────────────────────────
+library(tidyverse)
+library(stargazer)
+library(foreign)
+library(lmtest)
+library(car)
+library(sm)
+library(MASS)
+
+# ── Paths ────────────────────────────────────────────────────────────────────
+DATA_DIR   <- "data"
+OUTPUT_DIR <- "output"
+if (!dir.exists(OUTPUT_DIR)) dir.create(OUTPUT_DIR)
+
+# ── Load data ─────────────────────────────────────────────────────────────────
+reg_df <- read.csv(file.path(DATA_DIR, "reg_df.csv"))
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 1. Baseline models (no network variables)
+# ══════════════════════════════════════════════════════════════════════════════
+fit1 <- lm(score      ~ loggdp + logpop + share + mrp_ideology + E_score, data = reg_df)
+fit2 <- lm(logjob2023 ~ loggdp + logpop + share + mrp_ideology + E_score, data = reg_df)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2. Network models – EE score as outcome
+# ══════════════════════════════════════════════════════════════════════════════
+fit11 <- lm(score ~ average_degree_centrality +
+              loggdp + logpop + share + mrp_ideology + E_score, data = reg_df)
+
+fit12 <- lm(score ~ average_clustering +
+              loggdp + logpop + share + mrp_ideology + E_score, data = reg_df)
+
+fit13 <- lm(score ~ net_size +
+              loggdp + logpop + share + mrp_ideology + E_score, data = reg_df)
+
+fit14 <- lm(score ~ average_degree_centrality + average_clustering + net_size +
+              loggdp + logpop + share + mrp_ideology + E_score, data = reg_df)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 3. Network models – EE jobs (log) as outcome
+# ══════════════════════════════════════════════════════════════════════════════
+fit21 <- lm(logjob2023 ~ average_degree_centrality +
+              loggdp + logpop + share + mrp_ideology + E_score, data = reg_df)
+
+fit22 <- lm(logjob2023 ~ average_clustering +
+              loggdp + logpop + share + mrp_ideology + E_score, data = reg_df)
+
+fit23 <- lm(logjob2023 ~ net_size +
+              loggdp + logpop + share + mrp_ideology + E_score, data = reg_df)
+
+fit24 <- lm(logjob2023 ~ average_degree_centrality + average_clustering + net_size +
+              loggdp + logpop + share + mrp_ideology + E_score, data = reg_df)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 4. Diagnostic: Nonlinearity check → add quadratic ideology term
+# ══════════════════════════════════════════════════════════════════════════════
+residualPlots(fit1)  # ideology flagged as nonlinear → add squared term
+anova(fit1, lm(score ~ loggdp + logpop + share + mrp_ideology + I(mrp_ideology^2) + E_score,
+               data = reg_df))
+
+# Revised (final) model specification – adds I(mrp_ideology^2) throughout
+fit1_re  <- lm(score      ~ loggdp + logpop + share + mrp_ideology + I(mrp_ideology^2) + E_score, data = reg_df)
+fit2_re  <- lm(logjob2023 ~ loggdp + logpop + share + mrp_ideology + I(mrp_ideology^2) + E_score, data = reg_df)
+
+fit11_re <- lm(score ~ average_degree_centrality +
+                 loggdp + logpop + share + mrp_ideology + I(mrp_ideology^2) + E_score, data = reg_df)
+fit12_re <- lm(score ~ average_clustering +
+                 loggdp + logpop + share + mrp_ideology + I(mrp_ideology^2) + E_score, data = reg_df)
+fit13_re <- lm(score ~ net_size +
+                 loggdp + logpop + share + mrp_ideology + I(mrp_ideology^2) + E_score, data = reg_df)
+fit14_re <- lm(score ~ average_degree_centrality + average_clustering + net_size +
+                 loggdp + logpop + share + mrp_ideology + I(mrp_ideology^2) + E_score, data = reg_df)
+
+fit21_re <- lm(logjob2023 ~ average_degree_centrality +
+                 loggdp + logpop + share + mrp_ideology + I(mrp_ideology^2) + E_score, data = reg_df)
+fit22_re <- lm(logjob2023 ~ average_clustering +
+                 loggdp + logpop + share + mrp_ideology + I(mrp_ideology^2) + E_score, data = reg_df)
+fit23_re <- lm(logjob2023 ~ net_size +
+                 loggdp + logpop + share + mrp_ideology + I(mrp_ideology^2) + E_score, data = reg_df)
+fit24_re <- lm(logjob2023 ~ average_degree_centrality + average_clustering + net_size +
+                 loggdp + logpop + share + mrp_ideology + I(mrp_ideology^2) + E_score, data = reg_df)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 5. Residual diagnostics on revised models
+# ══════════════════════════════════════════════════════════════════════════════
+
+## 5a. Normality (Shapiro–Wilk)
+score_models <- list(fit1_re, fit11_re, fit12_re, fit13_re, fit14_re)
+job_models   <- list(fit2_re, fit21_re, fit22_re, fit23_re, fit24_re)
+lapply(c(score_models, job_models), function(m) shapiro.test(m$residuals))
+
+## 5b. Multicollinearity (VIF)
+lapply(c(score_models, job_models), vif)
+
+## 5c. Heteroscedasticity (NCV test)
+lapply(c(score_models, job_models), ncvTest)
+
+## 5d. Outliers (Bonferroni-adjusted)
+lapply(c(score_models, job_models), outlierTest)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 6. Export regression tables
+# ══════════════════════════════════════════════════════════════════════════════
+stargazer(fit1_re, fit11_re, fit12_re, fit13_re, fit14_re,
+          type = "text", title = "Regression results – EE score",
+          digits = 2, out = file.path(OUTPUT_DIR, "reg_results_EEscore.txt"))
+
+stargazer(fit2_re, fit21_re, fit22_re, fit23_re, fit24_re,
+          type = "text", title = "Regression results – EE jobs (log)",
+          digits = 2, out = file.path(OUTPUT_DIR, "reg_results_EEjob.txt"))
+
+stargazer(fit1_re, fit11_re, fit12_re, fit13_re, fit14_re,
+          type = "latex", title = "Regression results – EE score",
+          digits = 2, out = file.path(OUTPUT_DIR, "reg_results_EEscore.tex"))
+
+stargazer(fit2_re, fit21_re, fit22_re, fit23_re, fit24_re,
+          type = "latex", title = "Regression results – EE jobs (log)",
+          digits = 2, out = file.path(OUTPUT_DIR, "reg_results_EEjob.tex"))
+
+cat("Regression tables saved to output/\n")
